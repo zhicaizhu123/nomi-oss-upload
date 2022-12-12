@@ -1,13 +1,13 @@
 {
-  "name": "nomi-upload",
+  "name": "nomi-oss-upload",
   "version": "1.0.0",
-  "description": "",
+  "description": "oss upload CLI",
   "main": "index.js",
   "bin": {
-    "nomi-upload": "./cli.js"
+    "nomi-oss-upload": "cli.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "zhicaizhu123@126.com",
+  "license": "MIT",
   "dependencies": {
     "ali-oss": "^6.17.1",
     "axios": "^1.2.1",
@@ -17,5 +17,22 @@
     "fs-extra": "^11.1.0",
     "inquirer": "^8.2.5",
     "ora": "^5.4.0"
-  }
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhicaizhu123/upload-oss.git"
+  },
+  "keywords": [
+    "oss",
+    "upload",
+    "cli"
+  ],
+  "bugs": {
+    "url": "https://github.com/zhicaizhu123/upload-oss/issues"
+  },
+  "homepage": "https://github.com/zhicaizhu123/upload-oss#readme"
 }
