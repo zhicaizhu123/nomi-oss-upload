@@ -25,20 +25,20 @@ nomi-oss-upload -a https://example.com/api/oss/aliyun/get-oss-config
 ```
 
 url响应结构：
-```json
-{
-    "expiration": 30 * 60 * 1000,
-    "accessKeyId": "",
-    "region": "",
-    "bucketName": "",
-    "accessKeySecret": "",
-    "endpoint": "",
-    "securityToken": ""
+```typescript
+interface Res {
+    expiration: number
+    accessKeyId: string
+    region: string
+    bucketName: string
+    accessKeySecret: string
+    endpoint: string
+    securityToken: string
 }
 ```
 
 ### file
-> 待上传本地文件路径或目录路径
+> 待上传本地文件路径或目录路径（相对路径）
 
 使用方式：`-f`, `--file`
 ```bash
@@ -50,11 +50,24 @@ nomi-oss-upload -f path/to/example.json
 
 使用方式：`-s`, `--saveDir`
 ```bash
-nomi-oss-upload -s path/to/example
+nomi-oss-upload -s testDir
 ```
+⚠️注意：目录后不需要`/`，如果是多层级目录可以写成`parent/child`格式。
 
 ### configFile
-> 本地配置文件路径，文件中包含要上传的远端url列表，文件格式为 `json`
+> 本地配置文件路径（相对路径），文件中包含要上传的远端url列表，文件格式为 `json`
+
+json文件内容格式如下：
+```json
+[
+    "https://example.com/test.png",
+    "https://example.com/test.jpg",
+    "https://example.com/test.docx",
+    "https://example.com/test.ppt",
+    "https://example.com/test.json"
+    // ...
+]
+```
 
 使用方式：`-c`, `--configFile`
 ```bash
@@ -62,7 +75,7 @@ nomi-oss-upload -c path/to/example.config.json
 ```
 
 ### url
-> 待上传的远端url
+> 待上传的远端url（完整的有效路径）
 
 使用方式：`-u`, `--url`
 ```bash
