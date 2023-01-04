@@ -1,6 +1,6 @@
 {
   "name": "nomi-oss-upload",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "oss upload CLI",
   "main": "index.js",
   "bin": {

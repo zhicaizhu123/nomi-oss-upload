@@ -144,3 +144,6 @@ dist
 # End of https://www.toptal.com/developers/gitignore/api/node
 
 uploaded_list.json
+nomi.uploaded.json
+nomi.upload.config.js
+upload.json

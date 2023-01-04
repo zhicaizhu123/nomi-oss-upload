@@ -1,93 +1,18 @@
 const { resolve, extname, basename } = require('path')
 const { pathExistsSync, statSync, writeFileSync, readJSONSync } = require('fs-extra')
-const OSS = require('ali-oss')
-const axios = require('axios')
 const colors = require('colors')
 const fg = require('fast-glob');
 const ora = require('ora')
-const inquirer = require('inquirer')
 const spinner = ora('loading')
+const { getUrlStream, getAbsolutePath, isLink, getRandomString } = require('./utils')
+const { createOssClient, ossUpload } = require('./oss')
+const { promptAPI, promptDir, promptFileType, promptFileInfo, promptRemoteInfo, promptRandom } = require('./prompt');
 
-/**
- * 获取线上地址内容的流信息
- * @param {*} url  线上地址
- * @returns 
- */
-async function getUrlStream(url) {
-  const res = await axios({
-    url,
-    method: 'GET',
-    responseType: 'arraybuffer'
-  })
-  return res.data
-}
+const DEFAULT_CONFIG_FILE = 'nomi.upload.config.js'
+const DEFAULT_UPLOADED_FILE = 'nomi.uploaded.json'
 
-function getAbsolutePath(filePath) {
-  return resolve(process.cwd(), filePath)
-}
-
-/**
- * 获取oss上传签名和其他信息
- * @param {*} api 获取oss配置的接口连接
- * @returns 
- */
-async function getStsConfig(api) {
-  spinner.start('fetching oss config information...')
-  const res = await axios.get(api)
-  spinner.succeed('fetch oss config success')
-  const {
-    expiration = Date.now() + 30 * 60 * 1000,
-    accessKeyId = '',
-    region = '',
-    bucketName = '',
-    accessKeySecret = '',
-    endpoint = '',
-    securityToken = '',
-  } = res.data.data || res.data || {}
-
-  return {
-    expiration,
-    accessKeyId,
-    region,
-    bucket: bucketName,
-    accessKeySecret,
-    endpoint,
-    stsToken: securityToken,
-    refreshSTSToken,
-    refreshSTSTokenInterval: 3 * 60 * 1000,
-  }
-}
-
-/**
- * 刷新oss token 信息
- * @returns 
- */
-async function refreshSTSToken() {
-  const { region, bucket, accessKeyId, accessKeySecret, stsToken, endpoint } = await getStsConfig()
-  return {
-    region,
-    bucket,
-    accessKeyId,
-    accessKeySecret,
-    stsToken,
-    endpoint,
-  }
-}
-
-/**
- * 获取随机字符串
- * @param {} len 字符串长度
- * @returns 
- */
-function getRandomString(len = 10) {
-  // 生成随机名
-  const chars = 'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678'
-  const maxPos = chars.length
-  let pwd = ''
-  for (let i = 0; i < len; i++) {
-    pwd += chars.charAt(Math.floor(Math.random() * maxPos))
-  }
-  return pwd
+function verbose(...args) {
+  process.env.NOMI_UPLOAD_DEBUG && console.log(colors.blue('debug：'), ...args)
 }
 
 /**
@@ -126,21 +51,6 @@ function getFiles(file) {
 }
 
 
-
-/**
- * 上传单个文件
- * @param {*} client oss 实例
- * @param {*} info 上传文件信息
- * @returns 
- */
-async function uploadSingleFile(client, info) {
-  const data = await client.put(info.name, info.file)
-  return {
-    name: info.name,
-    url: data.url,
-  }
-}
-
 /**
  * 获取要上传的文件信息
  * @param {*} options 命令参数
@@ -158,6 +68,14 @@ function getFileInfoList(options) {
   return savedFileList
 }
 
+
+/**
+ * 生成远端文件的文件名
+ *
+ * @param {*} url
+ * @param {*} options
+ * @return {*} 
+ */
 function generateRemoteUrlFileName(url, options) {
   const { saveDir, random } = options
   if (saveDir) {
@@ -172,21 +90,21 @@ function generateRemoteUrlFileName(url, options) {
  * @returns 
  */
 async function getRemoteUrlInfoList(options) {
-  const remoteUrl = options.url
-  if (remoteUrl && isLink(remoteUrl)) {
+  const url = options.url
+  if (url && isLink(url)) {
     // 指定单个文件
-    const data = await getUrlStream(remoteUrl)
+    const data = await getUrlStream(url)
     return [{
-      name: generateRemoteUrlFileName(remoteUrl, options),
+      name: generateRemoteUrlFileName(url, options),
       file: data
     }]
   } else {
     // 上传配置文件中的所有文件
-    const configFile = getAbsolutePath(options.configFile)
-    if (pathExistsSync(configFile)) {
-      const stat = statSync(configFile)
+    const urlFile = getAbsolutePath(options.urlFile)
+    if (pathExistsSync(urlFile)) {
+      const stat = statSync(urlFile)
       if (stat.isFile()) {
-        const config = readJSONSync(configFile)
+        const config = readJSONSync(urlFile)
         const promises = config.map(item => {
           return getUrlStream(item)
         })
@@ -211,7 +129,7 @@ async function getRemoteUrlInfoList(options) {
  */
 async function getUploadFileList(options) {
   let fileList = []
-  if (options.url || options.configFile) {
+  if (options.url || options.urlFile) {
     spinner.start('parsing remote file url...')
     // 根据配置文件上传
     fileList = await getRemoteUrlInfoList(options)
@@ -223,192 +141,32 @@ async function getUploadFileList(options) {
   return fileList
 }
 
-function getTypeOptions() {
-  return [
-    {
-      name: '本地文件上传',
-      value: 'local'
-    },
-    {
-      name: '远端文件链接上传',
-      value: 'remote'
-    },
-  ]
-}
-
-function getRemoteTypeOptions() {
-  return [
-    {
-      name: '远端文件链接',
-      value: 'url'
-    },
-    {
-      name: '配置文件',
-      value: 'config'
-    },
-  ]
-}
-
-/**
- * 校验本地文件目录是否有效
- * @param {*} file 
- * @returns 
- */
-function validateFile(file) {
-  return file && pathExistsSync(getAbsolutePath(file))
-}
-
-/**
- * 校验远端文件链接或配置文件是否有效
- * @param {*} remoteUrl 
- * @param {*} configFile 
- * @returns 
- */
-function validateRemote(remoteUrl, configFile) {
-  if (remoteUrl) return true
-  if (configFile) {
-    const filePath = getAbsolutePath(configFile)
-    if (!pathExistsSync(filePath)) return false
-    const stat = statSync(filePath)
-    if (stat.isFile()) {
-      // 必须为 json 文件
-      return extname(filePath) === '.json'
+function setOptionsByConfigFile(options) {
+  const customConfigFile = getAbsolutePath(options.config || DEFAULT_CONFIG_FILE)
+  options.ossApiConfig = {}
+  options.ossConfig = void 0
+  if (pathExistsSync(customConfigFile)) {
+    const defineConfig = require(getAbsolutePath(customConfigFile))
+    let data
+    if (typeof defineConfig === 'function') {
+      data = defineConfig()
+    } else {
+      data = defineConfig
+    }
+    const { ossApiConfig, ossConfig, saveDir, random, debug } = data || {}
+    options.ossApiConfig = ossApiConfig || {}
+    options.ossConfig = ossConfig
+    if (saveDir) {
+      options.saveDir = saveDir
+    }
+    if (random) {
+      options.random = !!random
+    }
+    if (debug) {
+      options.random = !!debug
     }
   }
-  return false
-}
-
-function isLink(url) {
-  return /((https|http|ftp|rtsp|mms)?:\/\/)(([0-9a-z_!~*'().&=+$%-]+: )?[0-9a-z_!~*'().&=+$%-]+@)?(([0-9]{1,3}\.){3}[0-9]{1,3}|([0-9a-z_!~*'()-]+\.)*([0-9a-z][0-9a-z-]{0,61})?[0-9a-z]\.[a-z]{2,6})(:[0-9]{1,4})?((\/?)|(\/[0-9a-z_!~*'().;?:@&=+$,%#-]+)+\/?)/.test(url)
-}
-
-async function promptAPI(api) {
-  const promptOptions = []
-  if (!api || !isLink(api)) {
-    promptOptions.push({
-      type: 'input',
-      name: 'api',
-      message: '请输入获取oss配置信息接口连接',
-    })
-  }
-  const answers = await inquirer.prompt(promptOptions);
-  return answers
-}
-
-async function promptDir(saveDir) {
-  const promptOptions = []
-  if (!saveDir) {
-    promptOptions.push({
-      type: 'input',
-      name: 'saveDir',
-      message: '请输入文件保存的目录，如果不存在则会自动创建',
-      default: 'nomi'
-    })
-  }
-  const answers = await inquirer.prompt(promptOptions);
-  return answers
-}
-
-async function promptFileType(file, url, configFile) {
-  const promptOptions = []
-  const hasLocalFile = validateFile(file)
-  const hasRemote = validateRemote(url, configFile)
-  if (!hasLocalFile && !hasRemote) {
-    promptOptions.push({
-      type: 'list',
-      name: 'type',
-      message: '请选择上传方式',
-      choices: getTypeOptions(),
-    })
-  }
-  const answers = await inquirer.prompt(promptOptions);
-  return answers
-}
-
-async function promptFileInfo(type) {
-  const promptOptions = []
-  if (type === 'local') {
-    // 填写本地文件
-    promptOptions.push({
-      type: 'input',
-      name: 'file',
-      message: '请输入要上传的文件或则目录的相对路径',
-      default: '.',
-      validate: function (value) {
-        const done = this.async();
-        setTimeout(() => {
-          if (!pathExistsSync(getAbsolutePath(value))) {
-            done('请输入正确的路径');
-            return;
-          }
-          done(null, true);
-        }, 0);
-      },
-    })
-  } else if (type === 'remote') {
-    // 填写远端文件
-    promptOptions.push({
-      type: 'list',
-      name: 'remoteType',
-      message: '请选择上传远端文件的方式',
-      choices: getRemoteTypeOptions(),
-    })
-  }
-  const answers = await inquirer.prompt(promptOptions);
-  return answers
-}
-
-async function promptRemoteInfo(remoteType) {
-  const promptOptions = []
-  if (remoteType === 'url') {
-    promptOptions.push({
-      type: 'input',
-      name: 'url',
-      message: '请输入要上传的远端文件链接',
-      validate: function (value) {
-        const done = this.async();
-        setTimeout(() => {
-          if (!value || !isLink(value)) {
-            done('请输入有效的远端文件链接');
-            return;
-          }
-          done(null, true);
-        }, 0);
-      },
-    })
-  } else if (remoteType === 'config') {
-    promptOptions.push({
-      type: 'input',
-      name: 'configFile',
-      message: '请输入要包含远端链接列表的.json配置文件相对路径',
-      validate: function (value) {
-        const done = this.async();
-        setTimeout(() => {
-          if (!value || !pathExistsSync(getAbsolutePath(value))) {
-            done('请输入有效的配置文件相对路径');
-            return;
-          }
-          done(null, true);
-        }, 0);
-      },
-    })
-  }
-  const answers = await inquirer.prompt(promptOptions);
-  return answers
-}
-
-async function promptRandom(random) {
-  const promptOptions = []
-  if (!random) {
-    promptOptions.push({
-      type: 'confirm',
-      name: 'random',
-      message: '是否生成随机文件名称',
-      default: true
-    })
-  }
-  const answers = await inquirer.prompt(promptOptions);
-  return answers
+  return options
 }
 
 /**
@@ -417,17 +175,22 @@ async function promptRandom(random) {
  * @param {*} options 参数配置
  */
 async function init(options) {
-  const config = { ...options }
-  const apiAnswers = await promptAPI(config.api)
-  const typeAnswers = await promptFileType(config.file, config.url, config.configFile)
+  const config = { ...setOptionsByConfigFile(options) }
+  if (!!options.debug) {
+    process.env.NOMI_UPLOAD_DEBUG = true
+  }
+  const apiAnswers = await promptAPI(options.ossApiConfig.url || config.api)
+  const typeAnswers = await promptFileType(config.file, config.url, config.urlFile)
   const fileInfoAnswers = await promptFileInfo(typeAnswers.type)
   const remoteInfoAnswers = await promptRemoteInfo(fileInfoAnswers.remoteType)
   const dirAnswers = await promptDir(config.saveDir)
   const randomAnswers = await promptRandom(config.random)
   Object.assign(config, apiAnswers, dirAnswers, typeAnswers, fileInfoAnswers, remoteInfoAnswers, randomAnswers);
-  options.debug && console.log('config', config);
+  verbose('CLI config', config)
   upload(config);
 }
+
+
 
 /**
  * 上传
@@ -437,15 +200,20 @@ async function upload(options) {
   try {
     // 获取要上传的文件数据
     const uploadFileList = await getUploadFileList(options)
-    const config = await getStsConfig(options.api)
-    const client = new OSS(config)
-    const promises = uploadFileList.map(item => {
-      return uploadSingleFile(client, item)
+
+    spinner.start('init oss client....')
+    const client = await createOssClient({
+      api: options.ossApiConfig.url || config.api,
+      transfer:  options.ossApiConfig.transferResponse,
+      config: options.ossConfig
     })
+    spinner.succeed('init oss client success ')
+
     spinner.start('uploading files....')
-    const list = await Promise.all(promises)
-    spinner.succeed('uploaded success, more upload info please see ' + colors.blue(process.cwd() + '/uploaded_list.json'))
-    writeFileSync('./uploaded_list.json', JSON.stringify(list, null, 4))
+    const res = await ossUpload(client, uploadFileList)
+    spinner.succeed('uploaded success, more upload info please see ' + colors.blue(process.cwd() + '/' + DEFAULT_UPLOADED_FILE))
+    
+    writeFileSync('./' + DEFAULT_UPLOADED_FILE, JSON.stringify(res, null, 4))
   } catch(err) {
     console.log();
     console.log(colors.red(err.message));
